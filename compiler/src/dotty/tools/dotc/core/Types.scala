@@ -363,6 +363,7 @@ object Types {
       case AppliedType(tycon, args) => tycon.unusableForInference || args.exists(_.unusableForInference)
       case RefinedType(parent, _, rinfo) => parent.unusableForInference || rinfo.unusableForInference
       case TypeBounds(lo, hi) => lo.unusableForInference || hi.unusableForInference
+      case tp: FlexibleType => tp.getBounds.hi.unusableForInference || tp.getBounds.lo.unusableForInference
       case tp: AndOrType => tp.tp1.unusableForInference || tp.tp2.unusableForInference
       case tp: LambdaType => tp.resultType.unusableForInference || tp.paramInfos.exists(_.unusableForInference)
       case WildcardType(optBounds) => optBounds.unusableForInference
@@ -678,6 +679,7 @@ object Types {
      *  the type of the member as seen from given prefix `pre`.
      */
     final def findMember(name: Name, pre: Type, required: FlagSet = EmptyFlags, excluded: FlagSet = EmptyFlags)(using Context): Denotation = {
+      var dbg = false
       @tailrec def go(tp: Type): Denotation = tp match {
         case tp: TermRef =>
           go (tp.underlying match {
@@ -686,14 +688,36 @@ object Types {
             case tp1 => tp1
           })
         case tp: TypeRef =>
+          if dbg then
+            println("TYPEREF tp.denot")
+            println(tp.denot)
           tp.denot match {
-            case d: ClassDenotation => d.findMember(name, pre, required, excluded)
+            case d: ClassDenotation =>
+              if (dbg) {
+                println("classdenotation")
+                println(d.asInstanceOf[ClassDenotation].show)
+                println(name)
+                println(pre)
+                if (pre.isInstanceOf[TermRef]) println(pre.asInstanceOf[TermRef].myDesignator.asInstanceOf[Symbol].show)
+                println(d.findMember(name, pre, required, excluded, true))
+                println("END classdenotation")
+              }
+              d.findMember(name, pre, required, excluded)
             case d => go(d.info)
           }
+        case tp: FlexibleType =>
+          println("======= FLEX! ========")
+          println(tp.getBounds.hi)
+          go(tp.getBounds.hi)
         case tp: AppliedType =>
+          println("======= APPLIED ======")
+          println(tp) // final AppliedType tp seems to match completely and then takes route 1
           tp.tycon match {
             case tc: TypeRef =>
-              if (tc.symbol.isClass) go(tc)
+              if (tc.symbol.isClass) then
+                println("route 1")
+                dbg = true
+                go(tc)
               else {
                 val normed = tp.tryNormalize
                 go(if (normed.exists) normed else tp.superType)
@@ -1363,6 +1387,7 @@ object Types {
         case tp: ExprType => tp.resType.atoms
         case tp: OrType => tp.atoms // `atoms` overridden in OrType
         case tp: AndType => tp.tp1.atoms & tp.tp2.atoms
+        case tp: FlexibleType => tp.getBounds.hi.atoms
         case tp: TypeRef if tp.symbol.is(ModuleClass) =>
           // The atom of a module class is the module itself,
           // this corresponds to the special case in TypeComparer
@@ -1593,6 +1618,10 @@ object Types {
 
     /** The type <this . name> with given denotation, reduced if possible. */
     def select(name: Name, denot: Denotation)(using Context): Type =
+      println("select:")
+      println(name)
+      println(denot)
+      println(NamedType(this, name, denot).reduceProjection) // "method get" for level12.get(0)
       NamedType(this, name, denot).reduceProjection
 
     /** The type <this . sym>, reduced if possible */
@@ -2788,7 +2817,7 @@ object Types {
   /** The singleton type for path prefix#myDesignator.
    */
   abstract case class TermRef(override val prefix: Type,
-                              private var myDesignator: Designator)
+                              var myDesignator: Designator)
     extends NamedType, ImplicitRef, CaptureRef {
 
     type ThisType = TermRef
@@ -3287,6 +3316,24 @@ object Types {
   }
 
   // --- AndType/OrType ---------------------------------------------------------------
+
+  // -Vprint:all, -Vprint:typer, -Xprint-types
+  // use obj.show to pretty-print struct
+
+  abstract case class FlexibleType(tp: Type) extends CachedGroundType with ValueType {
+    def getBounds(using Context) : TypeBounds = TypeBounds(OrNull(this.tp), this.tp)
+    def derivedFlexibleType(under: Type)(using Context): Type =
+      FlexibleType(under)
+    override def computeHash(bs: Binders): Int = doHash(bs, tp)
+  }
+  final class CachedFlexibleType(tp: Type) extends FlexibleType(tp)
+
+  object FlexibleType {
+    def make(tp: Type)(using Context) = apply(tp)
+    def apply(tp: Type)(using Context) =
+      assertUnerased()
+      unique(new CachedFlexibleType(tp))
+  }
 
   abstract class AndOrType extends CachedGroundType with ValueType {
     def isAnd: Boolean
@@ -3884,6 +3931,7 @@ object Types {
     /** Does result type contain references to parameters of this method type,
      *  which cannot be eliminated by de-aliasing?
      */
+     // !!!!!!!!!!!!!
     def isResultDependent(using Context): Boolean =
       dependencyStatus == TrueDeps || dependencyStatus == CaptureDeps
 
@@ -5650,6 +5698,8 @@ object Types {
       tp.derivedJavaArrayType(elemtp)
     protected def derivedExprType(tp: ExprType, restpe: Type): Type =
       tp.derivedExprType(restpe)
+    protected def derivedFlexibleType(tp: FlexibleType, under: Type): Type =
+      tp.derivedFlexibleType(under)
     // note: currying needed  because Scala2 does not support param-dependencies
     protected def derivedLambdaType(tp: LambdaType)(formals: List[tp.PInfo], restpe: Type): Type =
       tp.derivedLambdaType(tp.paramNames, formals, restpe)
@@ -5666,11 +5716,15 @@ object Types {
         nil
 
     protected def mapOverLambda(tp: LambdaType) =
+      println("+++++ mapOverLambda1")
       val restpe = tp.resultType
       val saved = variance
       variance = if (defn.MatchCase.isInstance(restpe)) 0 else -variance
       val ptypes1 = tp.paramInfos.mapConserve(this).asInstanceOf[List[tp.PInfo]]
       variance = saved
+      println("+++++ mapOverLambda2")
+      println(this(restpe)) // ! this(restpe) has E in it for 12 but not 1
+      println("+++++ mapOverLambda3")
       derivedLambdaType(tp)(ptypes1, this(restpe))
 
     def isRange(tp: Type): Boolean = tp.isInstanceOf[Range]
@@ -5770,6 +5824,9 @@ object Types {
 
         case tp: OrType =>
           derivedOrType(tp, this(tp.tp1), this(tp.tp2))
+
+        case tp: FlexibleType =>
+          derivedFlexibleType(tp, this(tp.getBounds.hi))
 
         case tp: MatchType =>
           val bound1 = this(tp.bound)
@@ -6059,6 +6116,17 @@ object Types {
           if (underlying.isExactlyNothing) underlying
           else tp.derivedAnnotatedType(underlying, annot)
       }
+    override protected def derivedFlexibleType(tp: FlexibleType, underlying: Type): Type =
+      println("###########################")
+      println("###########################")
+      println("###########################")
+      underlying match {
+        case Range(lo, hi) =>
+          range(tp.derivedFlexibleType(lo), tp.derivedFlexibleType(hi))
+        case _ =>
+          if (underlying.isExactlyNothing) underlying
+          else tp.derivedFlexibleType(underlying)
+      }
     override protected def derivedCapturingType(tp: Type, parent: Type, refs: CaptureSet): Type =
       parent match // TODO ^^^ handle ranges in capture sets as well
         case Range(lo, hi) =>
@@ -6109,6 +6177,10 @@ object Types {
               derivedLambdaType(tp)(formals.map(upper(_).asInstanceOf[tp.PInfo]), restpe),
               derivedLambdaType(tp)(formals.map(lower(_).asInstanceOf[tp.PInfo]), restpe))
           else
+            println("=== derivedLambdaType !formals.exists(isRange)")
+            println(tp.paramNames)
+            println(formals)
+            println(restpe)
             tp.derivedLambdaType(tp.paramNames, formals, restpe)
       }
 
@@ -6199,6 +6271,9 @@ object Types {
 
       case tp: TypeVar =>
         this(x, tp.underlying)
+
+      case tp: FlexibleType =>
+        this(x, tp.getBounds.hi)
 
       case ExprType(restpe) =>
         this(x, restpe)

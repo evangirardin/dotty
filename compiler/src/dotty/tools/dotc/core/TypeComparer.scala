@@ -371,6 +371,10 @@ class TypeComparer(@constructorOnly initctx: Context) extends ConstraintHandling
       case OrType(tp21, tp22) =>
         if (tp21.stripTypeVar eq tp22.stripTypeVar) recur(tp1, tp21)
         else secondTry
+      // tp1 <: Flex(T) = T|N..T
+      // iff  tp1 <: T|N
+      case tp2: FlexibleType =>
+        recur(tp1, tp2.getBounds.lo) // check tp1 <: T
       case TypeErasure.ErasedValueType(tycon1, underlying2) =>
         def compareErasedValueType = tp1 match {
           case TypeErasure.ErasedValueType(tycon2, underlying1) =>
@@ -519,7 +523,10 @@ class TypeComparer(@constructorOnly initctx: Context) extends ConstraintHandling
           hardenTypeVars(tp2)
 
         res
-
+      // invariant: tp2 is NOT a FlexibleType
+      // is Flex(T) <: tp2?
+      case tp1: FlexibleType =>
+        recur(tp1.getBounds.hi, tp2)
       case CapturingType(parent1, refs1) =>
         if tp2.isAny then true
         else if subCaptures(refs1, tp2.captureSet, frozenConstraint).isOK && sameBoxed(tp1, tp2, refs1)

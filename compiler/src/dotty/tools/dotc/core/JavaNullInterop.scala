@@ -78,11 +78,11 @@ object JavaNullInterop {
    *  but the result type is not nullable.
    */
   private def nullifyExceptReturnType(tp: Type)(using Context): Type =
-    new JavaNullMap(true)(tp)
+    if ctx.flexibleTypes then new JavaFlexibleMap(true)(tp) else new JavaNullMap(true)(tp)
 
   /** Nullifies a Java type by adding `| Null` in the relevant places. */
   private def nullifyType(tp: Type)(using Context): Type =
-    new JavaNullMap(false)(tp)
+    if ctx.flexibleTypes then new JavaFlexibleMap(false)(tp) else new JavaNullMap(false)(tp)
 
   /** A type map that implements the nullification function on types. Given a Java-sourced type, this adds `| Null`
    *  in the right places to make the nulls explicit in Scala.
@@ -140,6 +140,62 @@ object JavaNullInterop {
         outermostLevelAlreadyNullable = true
         OrNull(derivedAndType(tp, this(tp.tp1), this(tp.tp2)))
       case tp: TypeParamRef if needsNull(tp) => OrNull(tp)
+      // In all other cases, return the type unchanged.
+      // In particular, if the type is a ConstantType, then we don't nullify it because it is the
+      // type of a final non-nullable field.
+      case _ => tp
+    }
+  }
+
+  /**
+   *  Flexible types
+   */
+
+  private class JavaFlexibleMap(var outermostLevelAlreadyNullable: Boolean)(using Context) extends TypeMap {
+    /** Should we nullify `tp` at the outermost level? */
+    def needsFlexible(tp: Type): Boolean =
+      !outermostLevelAlreadyNullable && (tp match {
+        case tp: TypeRef =>
+          // We don't modify value types because they're non-nullable even in Java.
+          !tp.symbol.isValueClass &&
+          // We don't modify `Any` because it's already nullable.
+          !tp.isRef(defn.AnyClass) &&
+          // We don't nullify Java varargs at the top level.
+          // Example: if `setNames` is a Java method with signature `void setNames(String... names)`,
+          // then its Scala signature will be `def setNames(names: (String|Null)*): Unit`.
+          // This is because `setNames(null)` passes as argument a single-element array containing the value `null`,
+          // and not a `null` array.
+          !tp.isRef(defn.RepeatedParamClass)
+        case _ => true
+      })
+
+    override def apply(tp: Type): Type = tp match {
+      case tp: TypeRef if needsFlexible(tp) => FlexibleType(tp)
+      case appTp @ AppliedType(tycon, targs) =>
+        val oldOutermostNullable = outermostLevelAlreadyNullable
+        // We don't make the outmost levels of type arguments nullable if tycon is Java-defined.
+        // This is because Java classes are _all_ nullified, so both `java.util.List[String]` and
+        // `java.util.List[String|Null]` contain nullable elements.
+        outermostLevelAlreadyNullable = tp.classSymbol.is(JavaDefined)
+        val targs2 = targs map this
+        outermostLevelAlreadyNullable = oldOutermostNullable
+        val appTp2 = derivedAppliedType(appTp, tycon, targs2)
+        if needsFlexible(tycon) then FlexibleType(appTp2) else appTp2
+      case ptp: PolyType =>
+        derivedLambdaType(ptp)(ptp.paramInfos, this(ptp.resType))
+      case mtp: MethodType =>
+        val oldOutermostNullable = outermostLevelAlreadyNullable
+        outermostLevelAlreadyNullable = false
+        val paramInfos2 = mtp.paramInfos map this
+        outermostLevelAlreadyNullable = oldOutermostNullable
+        derivedLambdaType(mtp)(paramInfos2, this(mtp.resType))
+      case tp: TypeAlias => mapOver(tp)
+      case tp: AndType =>
+        // nullify(A & B) = (nullify(A) & nullify(B)) | Null, but take care not to add
+        // duplicate `Null`s at the outermost level inside `A` and `B`.
+        outermostLevelAlreadyNullable = true
+        FlexibleType(derivedAndType(tp, this(tp.tp1), this(tp.tp2)))
+      case tp: TypeParamRef if needsFlexible(tp) => FlexibleType(tp)
       // In all other cases, return the type unchanged.
       // In particular, if the type is a ConstantType, then we don't nullify it because it is the
       // type of a final non-nullable field.

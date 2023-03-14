@@ -526,6 +526,7 @@ object TypeErasure {
     case tp: TypeProxy => hasStableErasure(tp.translucentSuperType)
     case tp: AndType => hasStableErasure(tp.tp1) && hasStableErasure(tp.tp2)
     case tp: OrType  => hasStableErasure(tp.tp1) && hasStableErasure(tp.tp2)
+    case _: FlexibleType => false
     case _ => false
   }
 
@@ -645,6 +646,7 @@ class TypeErasure(sourceLanguage: SourceLanguage, semiEraseVCs: Boolean, isConst
         JSDefinitions.jsdefn.PseudoUnionType
       else
         TypeComparer.orType(this(tp1), this(tp2), isErased = true)
+    case FlexibleType(tp) => this(tp)
     case tp: MethodType =>
       def paramErasure(tpToErase: Type) =
         erasureFn(sourceLanguage, semiEraseVCs, isConstructor, isSymbol, wildcardOK)(tpToErase)

@@ -270,7 +270,7 @@ object Denotations {
      *  flags and no `excluded` flag, and produce a denotation that contains the type of the member
      *  as seen from given prefix `pre`.
      */
-    def findMember(name: Name, pre: Type, required: FlagSet, excluded: FlagSet)(using Context): Denotation =
+    def findMember(name: Name, pre: Type, required: FlagSet, excluded: FlagSet, bruh: Boolean = false)(using Context): Denotation =
       info.findMember(name, pre, required, excluded)
 
     /** If this denotation is overloaded, filter with given predicate.
@@ -1073,6 +1073,9 @@ object Denotations {
         case thisd: SymDenotation => thisd.owner
         case _ => if (symbol.exists) symbol.owner else NoSymbol
       }
+      //println(symbol) // method get
+      //println(owner) // class ArrayList
+      // println(symbol.info) doesn't work
 
       /** The derived denotation with the given `info` transformed with `asSeenFrom`.
        *
@@ -1088,6 +1091,9 @@ object Denotations {
           symbol.is(Opaque)
 
         val derivedInfo = info.asSeenFrom(pre, owner)
+        println("derived:")
+        println(info)
+        println(derivedInfo) // not changing!
         if Config.reuseSymDenotations && this.isInstanceOf[SymDenotation]
            && (derivedInfo eq info) && !needsPrefix then
           this
