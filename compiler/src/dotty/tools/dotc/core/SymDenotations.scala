@@ -2133,16 +2133,11 @@ object SymDenotations {
       if name.isConstructorName then ownDenots
       else collect(ownDenots, info.parents)
 
-    override final def findMember(name: Name, pre: Type, required: FlagSet, excluded: FlagSet, bruh: Boolean = false)(using Context): Denotation =
+    override final def findMember(name: Name, pre: Type, required: FlagSet, excluded: FlagSet)(using Context): Denotation =
       val raw = if excluded.is(Private) then nonPrivateMembersNamed(name) else membersNamed(name)
       val pre1 = pre match
         case pre: OrType => pre.widenUnion
         case _ => pre
-      if (bruh) {
-        println("FINDMEMBER (SymDenotations)")
-        println(raw)
-        println(raw.filterWithFlags(required, excluded).asSeenFrom(pre1))
-      }
       raw.filterWithFlags(required, excluded).asSeenFrom(pre1).toDenot(pre1)
 
     final def findMemberNoShadowingBasedOnFlags(name: Name, pre: Type,
@@ -2250,7 +2245,7 @@ object SymDenotations {
             tp.derivedCapturingType(recur(parent), refs)
 
           case tp: FlexibleType =>
-            tp.derivedFlexibleType(recur(tp.getBounds.hi))
+            recur(tp.underlying)
 
           case tp: TypeProxy =>
             def computeTypeProxy = {

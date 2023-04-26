@@ -52,8 +52,6 @@ object TypeOps:
         Stats.record("asSeenFrom skolem prefix required")
       case _ =>
     }
-    println("=== asSeenFrom (TypeOps)!")
-    println(new AsSeenFromMap(pre, cls).apply(tp)) // !!!
     new AsSeenFromMap(pre, cls).apply(tp)
   }
 
@@ -97,23 +95,18 @@ object TypeOps:
       trace.conditionally(track, s"asSeen ${tp.show} from (${pre.show}, ${cls.show})", show = true) { // !!! DEBUG
         // All cases except for ThisType are the same as in Map. Inlined for performance
         // TODO: generalize the inlining trick?
-        println("AsSeenFromMap.apply")
-        println(tp)
         tp match {
           case tp: NamedType =>
             val sym = tp.symbol
             if (sym.isStatic && !sym.maybeOwner.seesOpaques || (tp.prefix `eq` NoPrefix)) tp
             else derivedSelect(tp, atVariance(variance max 0)(this(tp.prefix)))
           case tp: LambdaType =>
-            println("eeeeee")
-            println(tp)
             mapOverLambda(tp) // special cased common case
           case tp: ThisType =>
             toPrefix(pre, cls, tp.cls)
           case _: BoundType =>
             tp
           case _ =>
-            println("hello!!!")
             mapOver(tp)
         }
       }
@@ -243,6 +236,7 @@ object TypeOps:
         if tp1.isBottomType && (tp1 frozen_<:< tp2) then orBaseClasses(tp2)
         else if tp2.isBottomType && (tp2 frozen_<:< tp1) then orBaseClasses(tp1)
         else intersect(orBaseClasses(tp1), orBaseClasses(tp2))
+      case FlexibleType(tp1) => orBaseClasses(tp1)
       case _ => tp.baseClasses
 
     /** The minimal set of classes in `cs` which derive all other classes in `cs` */

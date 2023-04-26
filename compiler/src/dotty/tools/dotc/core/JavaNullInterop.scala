@@ -63,10 +63,10 @@ object JavaNullInterop {
       // Don't nullify the return type of the `toString` method.
       // Don't nullify the return type of constructors.
       // Don't nullify the return type of methods with a not-null annotation.
-      nullifyExceptReturnType(tp)
+      nullifyExceptReturnType(tp, sym.owner.isClass)
     else
       // Otherwise, nullify everything
-      nullifyType(tp)
+      nullifyType(tp, sym.owner.isClass)
   }
 
   private def hasNotNullAnnot(sym: Symbol)(using Context): Boolean =
@@ -77,12 +77,12 @@ object JavaNullInterop {
    *  If tp is a type of a field, the inside of the type is nullified,
    *  but the result type is not nullable.
    */
-  private def nullifyExceptReturnType(tp: Type)(using Context): Type =
-    if ctx.flexibleTypes then new JavaFlexibleMap(true)(tp) else new JavaNullMap(true)(tp)
+  private def nullifyExceptReturnType(tp: Type, ownerIsClass: Boolean)(using Context): Type =
+    if ctx.flexibleTypes /*&& ownerIsClass*/ then new JavaFlexibleMap(true)(tp) else new JavaNullMap(true)(tp) // FLEX PARAMS
 
   /** Nullifies a Java type by adding `| Null` in the relevant places. */
-  private def nullifyType(tp: Type)(using Context): Type =
-    if ctx.flexibleTypes then new JavaFlexibleMap(false)(tp) else new JavaNullMap(false)(tp)
+  private def nullifyType(tp: Type, ownerIsClass: Boolean)(using Context): Type =
+    if ctx.flexibleTypes /*&& ownerIsClass*/ then new JavaFlexibleMap(false)(tp) else new JavaNullMap(false)(tp) // FLEX PARAMS
 
   /** A type map that implements the nullification function on types. Given a Java-sourced type, this adds `| Null`
    *  in the right places to make the nulls explicit in Scala.
@@ -170,7 +170,9 @@ object JavaNullInterop {
       })
 
     override def apply(tp: Type): Type = tp match {
-      case tp: TypeRef if needsFlexible(tp) => FlexibleType(tp)
+      case tp: TypeRef if needsFlexible(tp) =>
+        //println(Thread.currentThread().getStackTrace()(3).getMethodName())
+        FlexibleType(tp)
       case appTp @ AppliedType(tycon, targs) =>
         val oldOutermostNullable = outermostLevelAlreadyNullable
         // We don't make the outmost levels of type arguments nullable if tycon is Java-defined.
@@ -186,7 +188,7 @@ object JavaNullInterop {
       case mtp: MethodType =>
         val oldOutermostNullable = outermostLevelAlreadyNullable
         outermostLevelAlreadyNullable = false
-        val paramInfos2 = mtp.paramInfos map this
+        val paramInfos2 = mtp.paramInfos map this /*new JavaNullMap(outermostLevelAlreadyNullable)*/ // FLEX PARAMS
         outermostLevelAlreadyNullable = oldOutermostNullable
         derivedLambdaType(mtp)(paramInfos2, this(mtp.resType))
       case tp: TypeAlias => mapOver(tp)
@@ -195,7 +197,8 @@ object JavaNullInterop {
         // duplicate `Null`s at the outermost level inside `A` and `B`.
         outermostLevelAlreadyNullable = true
         FlexibleType(derivedAndType(tp, this(tp.tp1), this(tp.tp2)))
-      case tp: TypeParamRef if needsFlexible(tp) => FlexibleType(tp)
+      case tp: TypeParamRef if needsFlexible(tp) =>
+        FlexibleType(tp)
       // In all other cases, return the type unchanged.
       // In particular, if the type is a ConstantType, then we don't nullify it because it is the
       // type of a final non-nullable field.

@@ -266,15 +266,19 @@ class CompilationTests {
     compileFilesInDir("tests/explicit-nulls/run", explicitNullsOptions)
   }.checkRuns()
 
+  // Flexible types tests
   @Test def flexibleTypesRun: Unit = {
     implicit val testGroup: TestGroup = TestGroup("flexibleTypesRun")
     compileFilesInDir("tests/flexible-types/run", flexibleTypesOptions)
   }.checkRuns()
 
-  @Test def flexibleTypesPost: Unit = {
+  @Test def flexibleTypesPos: Unit = {
     implicit val testGroup: TestGroup = TestGroup("flexibleTypesPos")
-    compileFilesInDir("tests/flexible-types/pos", flexibleTypesOptions)
-  }
+    aggregateTests(
+      compileFilesInDir("tests/flexible-types/pos", flexibleTypesOptions),
+      compileFilesInDir("tests/flexible-types/pos-separate", flexibleTypesOptions)
+    )
+  }.checkCompile()
 
   // initialization tests
   @Test def checkInit: Unit = {

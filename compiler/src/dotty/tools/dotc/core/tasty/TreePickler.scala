@@ -271,7 +271,7 @@ class TreePickler(pickler: TastyPickler) {
       withLength { pickleType(tpe.tp1, richTypes); pickleType(tpe.tp2, richTypes) }
     case tpe: FlexibleType =>
       writeByte(FLEXIBLEtype)
-      withLength { /*pickleType(tpe.getRegBounds, richTypes);*/ pickleType(tpe.getBounds, richTypes)  }
+      withLength { pickleType(tpe.underlying, richTypes)  }
     case tpe: ExprType =>
       writeByte(BYNAMEtype)
       pickleType(tpe.underlying)
